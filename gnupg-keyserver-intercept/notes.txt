@@ -1,0 +1,9 @@
+Check if your gpg version notifies you if the keyserver sends you a different key you requested.
+
+One term: `$ ./fake_server.py`
+Other term: `$ gpg --keyserver hkp://localhost --recv deadbeef`
+
+Findings:
+
+gpg 2.0.26: Rejects
+gpg 1.4.x: Accepts without warning
