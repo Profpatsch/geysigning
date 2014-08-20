@@ -15,7 +15,7 @@ If the picture looks the same, you still know nothing.
 
 The algorithm used here is a worm crawling over a discrete plane,
 leaving a trace (augmenting the field) everywhere it goes.
-Movement is taken from dgst_raw 2bit-wise.  Bumping into walls
+Movement is taken from the fingerprint 2bit-wise.  Bumping into walls
 makes the respective movement vector be ignored for this turn.
 Graphs are not unambiguous, because circles in graphs can be
 walked in either direction.
@@ -88,3 +88,35 @@ class Randomart:
     def get_matrix(self):
         """Get the matrix representation."""
         return self._key_fingerprint_walk()
+
+    def to_ascii(self):
+        """Returns an ascii representation."""
+        field, start, end = self.get_matrix()
+        # Maximum value that can be represented with the augstring
+        maxval = len(self.AUGMENTATION_STRING) - 3
+
+        upper_border = "+" + "-" * (self.width) + "+"
+        lower_border = upper_border
+
+        field_cut = []
+        for row in field:
+            # high cut values exceeding available symbols
+            field_cut.append([min(v, maxval) for v in row])
+
+        # Mark starting point and end points
+        sx, sy = start
+        ex, ey = end
+        field_cut[sy][sx] = maxval + 1
+        field_cut[ey][ex] = maxval + 2
+
+        ascii_field = []
+        for row in field_cut:
+            # replace with ascii
+            ascii_field.append(
+                "|{}|".format(
+                    "".join([self.AUGMENTATION_STRING[v]
+                             for v in row])))
+
+        return "{}\n{}\n{}\n".format(upper_border,
+                                     "\n".join(ascii_field),
+                                     lower_border)
