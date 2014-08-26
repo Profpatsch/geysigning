@@ -18,7 +18,7 @@ class KeyRequestHandlerBase(BaseHTTPServer.BaseHTTPRequestHandler):
     '''
     server_version = 'Geysign/' + 'FIXME-Version'
 
-    ctype = 'application/openpgpkey' # FIXME: What the mimetype of an OpenPGP key?
+    ctype = 'application/pgp-keys'
 
     def do_GET(self):
         f = self.send_head(self.keydata)
