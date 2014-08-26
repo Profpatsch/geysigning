@@ -12,6 +12,7 @@ import re
 try:
     from monkeysign.gpg import Keyring, TempKeyring
     from monkeysign.ui import MonkeysignUi
+    from monkeysign.gpg import GpgRuntimeError
 except ImportError, e:
     print "A required python module is missing!\n%s" % (e,)
     sys.exit()
@@ -203,14 +204,25 @@ class GetKeySection(Gtk.VBox):
         self.progressBar.set_fraction((page_index+1)/3.0)
 
 
+    def verify_fingerprint(self, input_string):
+        # Check for a fingerprint in the given string. It can be provided
+        # from the QR scanner or from the text user typed in.
+        m = re.search("((?:[0-9A-F]{4}\s*){10})", input_string, re.IGNORECASE)
+        if m != None:
+            fpr = m.group(1).replace(' ', '')
+        else:
+            fpr = None
+
+        return fpr
+
     def on_barcode(self, sender, barcode, message=None):
         '''This is connected to the "barcode" signal.
         The message argument is a GStreamer message that created
         the barcode.'''
-        # barcode string starts with 'OPENPGP4FPR:' followed by the fingerprint
-        m = re.search("((?:[0-9A-F]{4}\s*){10})", barcode, re.IGNORECASE)
-        if m != None:
-            fpr = m.group(1).replace(' ', '')
+
+        fpr = self.verify_fingerprint(barcode)
+
+        if fpr != None:
             try:
                 pgpkey = key.Key(fpr)
             except key.KeyError:
@@ -277,6 +289,8 @@ class GetKeySection(Gtk.VBox):
                 is_valid = False
 
             if is_valid:
+                # FIXME: make it to exit the entire process of signing
+                # if fingerprint was different ?
                 break
         else:
             self.log.error("Could not find fingerprint %s " +\
@@ -312,14 +326,16 @@ class GetKeySection(Gtk.VBox):
             self.signui.copy_secrets()
             # 3. for every user id (or all, if -a is specified)
             # 3.1. sign the uid, using gpg-agent
-            self.signui.sign_key()
+            try:
+                self.signui.sign_key()
+            except GpgRuntimeError, e:
+                self.log.error("There was an error signing key: \n%s", e)
 
             # 3.2. export and encrypt the signature
             # 3.3. mail the key to the user
             # FIXME: for now only export it to a file
             self.save_to_file()
             # self.sign.export_key()
-
 
             # 3.4. optionnally (-l), create a local signature and import in
             # local keyring
@@ -328,6 +344,8 @@ class GetKeySection(Gtk.VBox):
 
         else:
             self.log.error('data found in barcode does not match a OpenPGP fingerprint pattern: %s', fingerprint)
+            if error_cb:
+                GLib.idle_add(error_cb, data)
 
         return False
 
@@ -340,7 +358,7 @@ class GetKeySection(Gtk.VBox):
 
         for fpr, key in self.signui.signed_keys.items():
             filename = "%s_signed.gpg" %fpr
-            f = fopen(filename, "wt")
+            f = open(filename, "wt")
 
             f.write(self.signui.tmpkeyring.export_data(fpr))
 
@@ -366,14 +384,22 @@ class GetKeySection(Gtk.VBox):
                     message = args[1]
                     fingerprint = pgpkey.fingerprint
                 else:
-                    fingerprint = self.scanPage.get_text_from_textview()
+                    raw_text = self.scanPage.get_text_from_textview()
+                    fingerprint = self.verify_fingerprint(raw_text)
+
+                    if fingerprint == None:
+                        self.log.error("The fingerprint typed was wrong."
+                        " Please re-check : {}".format(raw_text))
+                        # FIXME: make it to stop switch the page if this happens
+                        return
 
                 # save a reference to the last received fingerprint
                 self.last_received_fingerprint = fingerprint
 
                 # error callback function
-                err = lambda x: self.signPage.topLabel.set_markup("Error downloading"
-                                    " key with fpr \n%s" %fingerprint)
+                err = lambda x: self.signPage.mainLabel.set_markup('<span size="15000">'
+                        'Error downloading key with fpr\n{}</span>'
+                        .format(fingerprint))
                 # use GLib.idle_add to use a separate thread for the downloading of
                 # the keydata
                 GLib.idle_add(self.obtain_key_async, fingerprint, self.recieved_key,
@@ -383,6 +409,7 @@ class GetKeySection(Gtk.VBox):
             if page_index == 2:
                 # signing of key and sending an email is done on separate
                 # threads also
+
                 GLib.idle_add(self.sign_key_async, self.last_received_fingerprint,
                     self.send_email, self.last_received_fingerprint)
 
@@ -392,8 +419,9 @@ class GetKeySection(Gtk.VBox):
             self.set_progress_bar()
 
 
-    def recieved_key(self, fingerprint, keydata, *data):
-        self.signPage.display_downloaded_key(fingerprint, keydata)
+    def recieved_key(self, fingerprint, *data):
+        openpgpkey = self.tmpkeyring.get_keys(fingerprint).values()[0]
+        self.signPage.display_downloaded_key(openpgpkey, fingerprint)
 
 
 
@@ -415,39 +443,46 @@ passwords."""
         MonkeysignUi.main(self)
 
     def yes_no(self, prompt, default = None):
-        dialog = Gtk.MessageDialog(self.app.window, 0, Gtk.MessageType.INFO,
-                    Gtk.ButtonsType.OK_CANCEL, prompt)
-        response = dialog.run()
-        dialog.destroy()
-        return response == Gtk.ResponseType.OK
+        # dialog = Gtk.MessageDialog(self.app.window, 0, Gtk.MessageType.INFO,
+        #             Gtk.ButtonsType.YES_NO, prompt)
+        # response = dialog.run()
+        # dialog.destroy()
+
+        # return response == Gtk.ResponseType.YES
+        # Simply return True for now
+        return True
 
     def choose_uid(self, prompt, key):
-        dialog = Gtk.Dialog(prompt, self.app.window, 0,
-                (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                 Gtk.STOCK_OK, Gtk.ResponseType.OK))
+        # dialog = Gtk.Dialog(prompt, self.app.window, 0,
+        #         (Gtk.STOCK_CANCEL, Gtk.ResponseType.REJECT,
+        #          Gtk.STOCK_OK, Gtk.ResponseType.ACCEPT))
 
-        label = Gtk.Label(prompt)
-        self.box = dialog.get_content_area()
-        self.box.add(label)
-        label.show()
+        # label = Gtk.Label(prompt)
+        # dialog.vbox.pack_start(label, False, False, 0)
+        # label.show()
 
-        self.uid_radios = None
-        for uid in key.uidslist:
-            r = Gtk.RadioButton(self.uid_radios, uid.uid)
-            r.show()
-            self.box.add(r)
-            if self.uid_radios is None:
-                self.uid_radios = r
-                self.uid_radios.set_active(True)
+        # self.uid_radios = None
+        # for uid in key.uidslist:
+        #     r = Gtk.RadioButton.new_with_label_from_widget(
+        #                 self.uid_radios, uid.uid)
+        #     r.show()
+        #     dialog.vbox.pack_start(r, False, False, 0)
 
-        response = dialog.run()
+        #     if self.uid_radios is None:
+        #         self.uid_radios = r
+        #         self.uid_radios.set_active(True)
+        #     else:
+        #         self.uid_radios.set_active(False)
 
-        label = None
-        if response == Gtk.ResponseType.OK:
-            self.log(_('okay, signing'))
-            label = [ r for r in self.uid_radios.get_group() if r.get_active()][0].get_label()
-        else:
-            self.log(_('user denied signature'))
+        # response = dialog.run()
 
-        dialog.destroy
-        return label
+        # label = None
+        # if response == Gtk.ResponseType.ACCEPT:
+        #     self.app.log.info("okay signing")
+        #     label = [ r for r in self.uid_radios.get_group() if r.get_active()][0].get_label()
+        # else:
+        #     self.app.log.info('user denied signature')
+
+        # dialog.destroy()
+        # return label
+        return None
