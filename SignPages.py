@@ -2,6 +2,7 @@
 
 import sys
 import StringIO
+import logging
 
 try:
     from gi.repository import Gtk, GdkPixbuf
@@ -195,6 +196,8 @@ class KeyDetailsPage(Gtk.VBox):
     def __init__(self):
         super(KeyDetailsPage, self).__init__()
         self.set_spacing(10)
+        
+        self.log = logging.getLogger()
 
         # FIXME: this should be moved to KeySignSection
         self.keyring = Keyring()
@@ -226,7 +229,8 @@ class KeyDetailsPage(Gtk.VBox):
             record = block.split(":")
             if record[0] != "sig":
                 continue
-            (rectype, null, null, algo, keyid, timestamp, null, null, null, uid, null, null) = record
+            self.log.debug("sig record (%d) %s", len(record), record)
+            keyid, timestamp, uid = record[4], record[5], record[9]
             sigslist.append((keyid, timestamp, uid))
 
         return sigslist
