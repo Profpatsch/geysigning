@@ -5,6 +5,7 @@ import logging
 import socket
 from SocketServer import ThreadingMixIn
 from threading import Thread
+import random
 
 from network.AvahiPublisher import AvahiPublisher
 
@@ -46,7 +47,7 @@ class ServeKeyThread(Thread):
     If you want to stop serving, call shutdown().
     '''
 
-    def __init__(self, data, port=9001, *args, **kwargs):
+    def __init__(self, data, port=None, *args, **kwargs):
         '''Initializes the server to serve the data'''
         self.keydata = data
         self.port = port
@@ -65,9 +66,9 @@ class ServeKeyThread(Thread):
         in order for this work.
         '''
 
-        port = port or self.port or 9001
-
-        tries = 10
+        # IANA suggestion (ephermal ports)
+        PORT_MIN, PORT_MAX = 49152, 65535
+        port = port or self.port
 
         kd = data if data else self.keydata
         class KeyRequestHandler(KeyRequestHandlerBase):
@@ -75,38 +76,52 @@ class ServeKeyThread(Thread):
             keydata = kd
         HandlerClass = KeyRequestHandler
 
-        for port_i in (port + p for p in range(tries)):
-            try:
-                log.info('Trying port %d', port_i)
-                server_address = ('', port_i)
-                self.httpd = ThreadedKeyserver(server_address, HandlerClass, **kwargs)
-
-                ###
-                # This is a bit of a hack, it really should be
-                # in some lower layer, such as the place were
-                # the socket is created and listen()ed on.
-                self.avahi_publisher = ap = AvahiPublisher(
-                    service_port = port_i,
-                    service_name = 'HTTP Keyserver',
-                    service_txt = self.keydata,
-                    service_type = '_geysign._tcp',
-                )
-                log.info('Trying to add Avahi Service')
-                ap.add_service()
-
-            except socket.error, value:
-                errno = value.errno
-                if errno == 10054 or errno == 32:
-                    # This seems to be harmless
-                    break
-            else:
-                break
-
-            finally:
-                pass
-
+        # If port specified and binding fails, crash.
+        # FIXME: Do we really need to enable specifying a port? If not this
+        # would remove some complexity.
+        if port:
+            ok = self._setup_server(port, HandlerClass, kwargs)
+            if not ok:
+                log.error('Could not bind to specified port ({}).'.format(e.port))
+                # FIXME: How to signal failure?!
+        # If none specified, try the private range until one succeeds.
+        else:
+            ok = False
+            while not ok:
+                port = random.randint(PORT_MIN, PORT_MAX)
+                log.info('Trying port %d.', port)
+                ok = self._setup_server(port, HandlerClass, kwargs)
+                if not ok:
+                    log.info('Failed.')
 
         super(ServeKeyThread, self).start(*args, **kwargs)
+
+    def _setup_server(self, port, handler_class, kwargs):
+        '''Setup the server, return True if successful.'''
+        server_address = ('', port)
+        self.httpd = ThreadedKeyserver(server_address, handler_class, **kwargs)
+
+        ###
+        # This is a bit of a hack, it really should be
+        # in some lower layer, such as the place were
+        # the socket is created and listen()ed on.
+        try:
+            self.avahi_publisher = ap = AvahiPublisher(
+                service_port = port,
+                service_name = 'HTTP Keyserver',
+                service_txt = self.keydata,
+                service_type = '_geysign._tcp',
+            )
+            log.info('Trying to add Avahi Service')
+            ap.add_service()
+        except socket.error, value:
+            # FIXME(muelli): Name these error values.
+            if errno == 10054 or errno == 32:
+                # This seems to be harmless
+                pass
+            else:
+                return False
+        return True
 
 
     def serve_key(self):
