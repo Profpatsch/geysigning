@@ -24,8 +24,6 @@ This greatly reduces complexity as no SMTP configuration needs to be obtained
 and gives the user a well known interface.
 
 
-
-
 Installation
 =============
 
@@ -45,4 +43,12 @@ The list of dependencies has not yet fully been determined.
     * gir1.2-gst-plugins-base-1.0  (maybe)
     
 
+1. Install virtualenvwrapper
+2. `mkvirtualenv --python=/usr/bin/python2.7 --system-site-packages geysigning`
+3. make dev_environment
 
+If you open another terminal, you have to `workon geysigning`.
+
+Running the tests:
+
+    make test
