@@ -257,21 +257,25 @@ class GetKeySection(Gtk.VBox):
                 self.log.exception("While downloading key from %s %i",
                                     address, port)
 
-    def verify_downloaded_key(self, downloaded_data, fingerprint):
-        # FIXME: implement a better and more secure way to verify the key
-        if self.tmpkeyring.import_data(downloaded_data):
-            imported_key_fpr = self.tmpkeyring.get_keys().keys()[0]
-            if imported_key_fpr == fingerprint:
-                result = True
-            else:
-                self.log.info("Key does not have equal fp: %s != %s", imported_key_fpr, fingerprint)
-                result = False
-        else:
-            self.log.info("Failed to import downloaded data")
-            result = False
+    def verify_downloaded_key(self, keydata, fingerprint):
+        """Verifies that the key is indeed the one sent by the server.
 
-        self.log.debug("Trying to validate %s against %s: %s", downloaded_data, fingerprint, result)
-        return result
+        Provides security agains Man in the Middle attacks.
+
+        Args:
+            fingerprint: Fingerprint of the key to verify.
+
+        Returns:
+            Whether the key verifies."
+        """
+        # FIXME(Profpatsch): implement a better and more secure way to verify the key
+        imported_key_fpr = self.tmpkeyring.get_keys().keys()[0]
+        self.log.debug("Trying to validate %s against %s: %s", keydata, fingerprint, result)
+        if imported_key_fpr == fingerprint:
+            return True
+        else:
+            self.log.info("Key does not have equal fp: %s != %s", imported_key_fpr, fingerprint)
+            return False
 
 
     def obtain_key_async(self, fingerprint, callback=None, data=None, error_cb=None):
@@ -283,21 +287,20 @@ class GetKeySection(Gtk.VBox):
         self.tmpkeyring = TempKeyring()
 
         for keydata in self.try_download_keys(other_clients):
-            if self.verify_downloaded_key(keydata, fingerprint):
-                is_valid = True
-            else:
-                is_valid = False
+            if not self.tmpkeyring.import_data(keydata):
+                self.log.info("Failed to import downloaded data")
+                continue
 
-            if is_valid:
+            if self.verify_downloaded_key(keydata, fingerprint):
                 # FIXME: make it to exit the entire process of signing
                 # if fingerprint was different ?
                 break
-        else:
-            self.log.error("Could not find fingerprint %s " +\
-                           "with the available clients (%s)",
-                           fingerprint, other_clients)
-            self.log.debug("Calling error callback, if available: %s",
-                            error_cb)
+            else:
+                self.log.error("Could not find fingerprint %s " +\
+                               "with the available clients (%s)",
+                               fingerprint, other_clients)
+                self.log.debug("Calling error callback, if available: %s",
+                                error_cb)
 
             if error_cb:
                 GLib.idle_add(error_cb, data)
