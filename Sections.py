@@ -1,34 +1,24 @@
 #!/usr/bin/env python
-
-import logging
-from urlparse import ParseResult
-
-import requests
-from requests.exceptions import ConnectionError
-
-import sys
-import re
-
-try:
-    from monkeysign.gpg import Keyring, TempKeyring
-    from monkeysign.ui import MonkeysignUi
-    from monkeysign.gpg import GpgRuntimeError
-except ImportError, e:
-    print "A required python module is missing!\n%s" % (e,)
-    sys.exit()
-
-import Keyserver
+import key as key_mod
 from SignPages import KeysPage, KeyPresentPage, KeyDetailsPage
 from SignPages import ScanFingerprintPage, SignKeyPage, PostSignPage
-import MainWindow
-
-import key
 
 from gi.repository import Gst, Gtk, GLib
 # Because of https://bugzilla.gnome.org/show_bug.cgi?id=698005
 from gi.repository import GdkX11
 # Needed for window.get_xid(), xvimagesink.set_window_handle(), respectively:
 from gi.repository import GstVideo
+from monkeysign.gpg import Keyring
+from monkeysign.ui import MonkeysignUi
+from monkeysign.gpg import GpgRuntimeError
+import requests
+from requests.exceptions import ConnectionError
+
+import sys
+import re
+import logging
+from urlparse import ParseResult
+
 
 Gst.init([])
 
@@ -87,8 +77,7 @@ class KeySignSection(Gtk.VBox):
         self.pack_start(self.notebook, True, True, 0)
         self.pack_start(buttonBox, False, False, 0)
 
-        # this will hold a reference to the last key selected
-        self.last_selected_key = None
+        self._last_selected_key = None
 
     def on_button_clicked(self, button):
 
@@ -104,22 +93,21 @@ class KeySignSection(Gtk.VBox):
             if page_index+1 == 1:
                 for path in paths:
                     iterator = model.get_iter(path)
-                    (name, email, keyid) = model.get(iterator, 0, 1, 2)
-                    try:
-                        openPgpKey = self.keysPage.keysDict[keyid]
-                    except KeyError:
-                        m = "No key details can be shown for id {}".format(keyid)
-                        self.log.info(m)
+                    (name, email, fingerprint) = model.get(iterator, 0, 1, 2)
+                    key = self.keysPage.keys_dict[fingerprint]
 
-                # display uids, exp date and signatures
-                self.keyDetailsPage.display_uids_signatures_page(openPgpKey)
                 # save a reference for later use
-                self.last_selected_key = openPgpKey
+                self._last_selected_key = key
+                # display uids, exp date and signatures
+                # FIXME: Use Key class API
+                self.keyDetailsPage.display_uids_signatures_page(key._key)
 
             elif page_index+1 == 2:
-                self.keyPresentPage.display_fingerprint_qr_page(self.last_selected_key)
+                self.keyPresentPage.display_fingerprint_qr_page(
+                    self._last_selected_key)
 
-                keyid = self.last_selected_key.keyid()
+                # FIXME: Use Key class API
+                keyid = self._last_selected_key._key.keyid()
                 self.keyring.export_data(fpr=str(keyid), secret=False)
                 keydata = self.keyring.context.stdout
 
@@ -137,6 +125,7 @@ class KeySignSection(Gtk.VBox):
                 self.backButton.set_sensitive(False)
 
             self.notebook.prev_page()
+
 
 
 class GetKeySection(Gtk.VBox):
@@ -204,9 +193,11 @@ class GetKeySection(Gtk.VBox):
         self.progressBar.set_fraction((page_index+1)/3.0)
 
 
-    def verify_fingerprint(self, input_string):
-        # Check for a fingerprint in the given string. It can be provided
-        # from the QR scanner or from the text user typed in.
+    @staticmethod
+    def verify_fingerprint(input_string):
+        '''Check for a fingerprint in the given string. It can be provided
+        from the QR scanner or from the text user typed in.
+        '''
         m = re.search("((?:[0-9A-F]{4}\s*){10})", input_string, re.IGNORECASE)
         if m != None:
             fpr = m.group(1).replace(' ', '')
@@ -224,8 +215,8 @@ class GetKeySection(Gtk.VBox):
 
         if fpr != None:
             try:
-                pgpkey = key.Key(fpr)
-            except key.KeyError:
+                pgpkey = key_mod.Key(fpr)
+            except key_mod.KeyError:
                 self.log.exception("Could not create key from %s", barcode)
             else:
                 self.log.info("Barcode signal %s %s" %( pgpkey.fingerprint, message))
@@ -233,8 +224,8 @@ class GetKeySection(Gtk.VBox):
         else:
             self.log.error("data found in barcode does not match a OpenPGP fingerprint pattern: %s", barcode)
 
-
-    def download_key_http(self, address, port):
+    @staticmethod
+    def download_key_http(address, port):
         url = ParseResult(
             scheme='http',
             # This seems to work well enough with both IPv6 and IPv4
@@ -257,41 +248,19 @@ class GetKeySection(Gtk.VBox):
                 self.log.exception("While downloading key from %s %i",
                                     address, port)
 
-    def verify_downloaded_key(self, keydata, fingerprint):
-        """Verifies that the key is indeed the one sent by the server.
 
-        Provides security agains Man in the Middle attacks.
-
-        Args:
-            fingerprint: Fingerprint of the key to verify.
-
-        Returns:
-            Whether the key verifies."
-        """
-        # FIXME(Profpatsch): implement a better and more secure way to verify the key
-        imported_key_fpr = self.tmpkeyring.get_keys().keys()[0]
-        self.log.debug("Trying to validate %s against %s: %s", keydata, fingerprint, result)
-        if imported_key_fpr == fingerprint:
-            return True
-        else:
-            self.log.info("Key does not have equal fp: %s != %s", imported_key_fpr, fingerprint)
-            return False
-
-
-    def obtain_key_async(self, fingerprint, callback=None, data=None, error_cb=None):
+    def obtain_key_async(self, keyhash, callback=None, data=None, error_cb=None):
         other_clients = self.app.discovered_services
         self.log.debug("The clients found on the network: %s", other_clients)
 
-        #FIXME: should we create a new TempKeyring for each key we want
-        # to sign it ?
-        self.tmpkeyring = TempKeyring()
-
         for keydata in self.try_download_keys(other_clients):
-            if not self.tmpkeyring.import_data(keydata):
-                self.log.info("Failed to import downloaded data")
+            try:
+                downloaded_key = key_mod.GPGKey.from_keydata(keydata)
+            except key_mod.KeyError as e:
+                self.log.info("Failed to import downloaded data:" + e.message)
                 continue
 
-            if self.verify_downloaded_key(keydata, fingerprint):
+            if downloaded_key.hash() == keyhash:
                 # FIXME: make it to exit the entire process of signing
                 # if fingerprint was different ?
                 break
@@ -379,6 +348,7 @@ class GetKeySection(Gtk.VBox):
             self.set_progress_bar()
 
             page_index = self.notebook.get_current_page()
+            # FIXME: AAAAAAARGH. Why. Why would you do that?
             if page_index == 1:
                 if args:
                     # If we call on_button_clicked() from on_barcode()
@@ -425,7 +395,6 @@ class GetKeySection(Gtk.VBox):
     def recieved_key(self, fingerprint, *data):
         openpgpkey = self.tmpkeyring.get_keys(fingerprint).values()[0]
         self.signPage.display_downloaded_key(openpgpkey, fingerprint)
-
 
 
 

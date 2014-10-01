@@ -1,19 +1,14 @@
 #!/usr/bin/env python
+import key as key_mod
 
-import sys
-import StringIO
-
-try:
-    from gi.repository import Gtk, GLib, GdkPixbuf
-    from monkeysign.gpg import Keyring
-    from qrencode import encode_scaled
-except ImportError, e:
-    print "A required python module is missing!\n%s" % (e,)
-    sys.exit()
+from gi.repository import Gtk, GLib, GdkPixbuf
+from monkeysign.gpg import Keyring
+from scan_barcode import BarcodeReaderGTK
+import qrencode as qr
 
 from datetime import datetime
-
-from scan_barcode import BarcodeReaderGTK
+import sys
+import StringIO
 
 
 # Pages for 'Keys' Tab
@@ -32,20 +27,22 @@ class KeysPage(Gtk.VBox):
         # FIXME: this should be moved to KeySignSection
         self.keyring = Keyring() # the user's keyring
 
-        self.keysDict = {}
-
+        # FIXME: Test for the filtering
+        def key_ok(key):
+            return not (key.invalid or key.disabled or
+                        key.expired or key.revoked)
+        self.keys_dict = {
+            fpr: key_mod.GPGKey.from_monkeysign_keyring(self.keyring, fpr)
+            for fpr, key
+            in self.keyring.get_keys(secret=True, public=False).iteritems()
+            if key_ok(key)
+        }
         # FIXME: this should be a callback function to update the display
         # when a key is changed/deleted
-        for key in self.keyring.get_keys(None, True, False).values():
-            if key.invalid or key.disabled or key.expired or key.revoked:
-                continue
-
+        for fingerprint, key in self.keys_dict.iteritems():
+            # FIXME: Use Key class API
+            key = key._key
             uidslist = key.uidslist #UIDs: Real Name (Comment) <email@address>
-            keyid = str(key.keyid()) # the key's short id
-
-            if not keyid in self.keysDict:
-                self.keysDict[keyid] = key
-
             for e in uidslist:
                 uid = str(e.uid)
                 # remove the comment from UID (if it exists)
@@ -61,7 +58,7 @@ class KeysPage(Gtk.VBox):
                 if len(tokens) > 1:
                     email = tokens[1].replace('>','').strip()
 
-                self.store.append((name, email, keyid))
+                self.store.append((name, email, fingerprint))
 
         # create the tree view
         self.treeView = Gtk.TreeView(model=self.store)
@@ -101,6 +98,8 @@ class KeyPresentPage(Gtk.HBox):
     def __init__(self):
         super(KeyPresentPage, self).__init__()
 
+        self.key = None
+
         # create left side Key labels
         leftTopLabel = Gtk.Label()
         leftTopLabel.set_markup('<span size="15000">' + 'Key Fingerprint' + '</span>')
@@ -113,7 +112,6 @@ class KeyPresentPage(Gtk.HBox):
         leftVBox.pack_start(self.fingerprintLabel, False, False, 0)
 
         self.pixbuf = None # Hold QR code in pixbuf
-        self.fpr = None # The fpr of the key selected to sign with
 
         # display QR code on the right side
         rightTopLabel = Gtk.Label()
@@ -137,45 +135,47 @@ class KeyPresentPage(Gtk.HBox):
         self.pack_start(leftVBox, True, True, 0)
         self.pack_start(self.rightVBox, True, True, 0)
 
-    def display_fingerprint_qr_page(self, openPgpKey):
-        rawfpr = openPgpKey.fpr
-        self.fpr = rawfpr
-        # display a clean version of the fingerprint
-        fpr = ""
-        for i in xrange(0, len(rawfpr), 4):
+    def display_fingerprint_qr_page(self, key):
+        # rawfpr = openPgpKey.fpr
+        # self.fpr = rawfpr
+        # # display a clean version of the fingerprint
+        # fpr = ""
+        # for i in xrange(0, len(rawfpr), 4):
 
-            fpr += rawfpr[i:i+4]
-            if i != 0 and (i+4) % 20 == 0:
-                fpr += "\n"
-            else:
-                fpr += " "
+        #     fpr += rawfpr[i:i+4]
+        #     if i != 0 and (i+4) % 20 == 0:
+        #         fpr += "\n"
+        #     else:
+        #         fpr += " "
 
-        fpr = fpr.rstrip()
-        self.fingerprintLabel.set_markup('<span size="20000">' + fpr + '</span>')
+        # fpr = fpr.rstrip()
+        self.key = key
+        self.fingerprintLabel.set_markup('<span size="20000">'
+                                         + key.fingerprint() +
+                                         '</span>')
 
         # draw qr code for this fingerprint
-        self.draw_qrcode()
+        self.draw_qrcode(key.hash())
 
     def expose_event(self, widget, event):
         # when window is resized, regenerate the QR code
         if self.rightVBox.get_allocation() != self.last_allocation:
             self.last_allocation = self.rightVBox.get_allocation()
-            self.draw_qrcode()
+            # FIXME: WTF, fix the drawing logic.
+            if self.key:
+                self.draw_qrcode(self.key.fingerprint())
 
-    def draw_qrcode(self):
-        if self.fpr is not None:
-            self.pixbuf = self.image_to_pixbuf(self.create_qrcode(self.fpr))
-            self.qrcode.set_from_pixbuf(self.pixbuf)
-        else:
-            self.qrcode.set_from_icon_name("gtk-dialog-error", Gtk.IconSize.DIALOG)
+    def draw_qrcode(self, data):
+        self.pixbuf = self.image_to_pixbuf(self.create_qrcode(data))
+        self.qrcode.set_from_pixbuf(self.pixbuf)
 
-    def create_qrcode(self, fpr):
+    def create_qrcode(self, data):
         box = self.rightVBox.get_allocation()
         if box.width < box.height:
             size = box.width - 30
         else:
             size = box.height - 30
-        version, width, image = encode_scaled('OPENPGP4FPR:'+fpr,size,0,1,2,True)
+        version, width, image = qr.encode_scaled('OPENPGP4FPR:' + data, size)
         return image
 
     def image_to_pixbuf(self, image):

@@ -1,5 +1,6 @@
-import pytest
+import key as key_m
 
+import pytest
 import monkeysign.gpg as gpg
 
 @pytest.fixture
@@ -15,5 +16,10 @@ def gpg_keyring(gpg_keydata):
     if not ring.import_data(gpg_keydata):
         raise KeyImportError()
     return ring
+
+@pytest.fixture
+def key(gpg_keydata):
+    return key_m.GPGKey.from_keydata(gpg_keydata)
+
 
 class KeyImportError(Exception): pass

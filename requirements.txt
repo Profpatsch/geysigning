@@ -5,6 +5,7 @@ requests
 
 # Additional Development packages
 pytest
+pytest-xdist
 pylint
 pep8
 
