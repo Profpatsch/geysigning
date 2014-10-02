@@ -1,11 +1,29 @@
 #!/usr/bin/env python
+#    Copyright 2014 Andrei Macavei <andrei.macavei89@gmail.com>
+#    Copyright 2014 Tobias Mueller <muelli@cryptobitch.de>
+#
+#    This file is part of GNOME Keysign.
+#
+#    GNOME Keysign is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    GNOME Keysign is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with GNOME Keysign.  If not, see <http://www.gnu.org/licenses/>.
 
+from itertools import islice
 import sys
 import StringIO
 import logging
 
 try:
-    from gi.repository import Gtk, GdkPixbuf
+    from gi.repository import Gtk, GLib, GdkPixbuf
     from monkeysign.gpg import Keyring
     from qrencode import encode_scaled
 except ImportError, e:
@@ -16,7 +34,8 @@ from datetime import datetime
 
 from scan_barcode import BarcodeReaderGTK
 
-FINGERPRINT_DEFAULT = 'F628 D3A3 9156 4304 3113\nA5E2 1CB9 C760 BC66 DFE1'
+
+# Pages for 'Keys' Tab
 
 class KeysPage(Gtk.VBox):
 
@@ -211,7 +230,7 @@ class KeyDetailsPage(Gtk.VBox):
         self.expireLabel = Gtk.Label()
         self.expireLabel.set_text("Expires 0000-00-00")
 
-        signaturesLabel = Gtk.Label()
+        self.signatures_label = signaturesLabel = Gtk.Label()
         signaturesLabel.set_text("Signatures")
 
         # this will also be populated later
@@ -261,23 +280,38 @@ class KeyDetailsPage(Gtk.VBox):
             expiry = "No expiration date"
 
         self.expireLabel.set_markup(expiry)
-
+        
+        
+        ### Set up signatures
         # FIXME: this would be better if it was done in monkeysign
         self.keyring.context.call_command(['list-sigs', str(openPgpKey.keyid())])
-
         sigslist = self.parse_sig_list(self.keyring.context.stdout)
-        # FIXME: what do we actually want to show here: the numbers of signatures
-        # for this key or the number of times this key was used to signed others
-        for (keyid,timestamp,uid) in sigslist:
-            sigLabel = Gtk.Label()
-            date = datetime.fromtimestamp(float(timestamp))
-            sigLabel.set_markup(str(keyid) + "\t\t" + date.ctime())
-            sigLabel.set_line_wrap(True)
 
-            self.signaturesBox.pack_start(sigLabel, False, False, 0)
-            sigLabel.show()
+        SHOW_SIGNATURES = False
+        if not SHOW_SIGNATURES:
+            self.signatures_label.hide()
+        else:
+            self.signatures_label.show()
+            sorted_sigslist = sorted(sigslist,
+                                     key=lambda signature:signature[1],
+                                     reverse=True)
+            for (keyid,timestamp,uid) in islice(sorted_sigslist, 10):
+                sigLabel = Gtk.Label()
+                date = datetime.fromtimestamp(float(timestamp))
+                sigLabel.set_markup(str(keyid) + "\t\t" + date.ctime())
+                sigLabel.set_line_wrap(True)
+    
+                self.signaturesBox.pack_start(sigLabel, False, False, 0)
+                sigLabel.show()
+            
+        sigLabel = Gtk.Label()
+        sigLabel.set_markup("%d signatures" % len(sigslist))
+        sigLabel.set_line_wrap(True)
+        self.signaturesBox.pack_start(sigLabel, False, False, 0)
+        sigLabel.show()
 
-# Pages shown on "Get Key" Tab
+
+# Pages for "Get Key" Tab
 
 class ScanFingerprintPage(Gtk.HBox):
 
@@ -326,29 +360,16 @@ class ScanFingerprintPage(Gtk.HBox):
         self.pack_start(leftBox, True, True, 0)
         self.pack_start(rightBox, True, True, 0)
 
-    def format_fingerprint(self, fpr, scanner=False):
-
-        if not scanner: # if fingerprint was typed
-
-            fpr = ''.join(fpr.replace(" ", '').split('\n'))
-
-            # a simple check to detect bad fingerprints
-            if len(fpr) != 40:
-                print("Fingerprint %s has not enough characters", fpr)
-                fpr = ''
-
-        return fpr
-
 
     def get_text_from_textview(self):
         start_iter = self.textbuffer.get_start_iter()
         end_iter = self.textbuffer.get_end_iter()
-        raw_fpr = self.textbuffer.get_text(start_iter, end_iter, False)
-        fpr = self.format_fingerprint(raw_fpr)
+        raw_text = self.textbuffer.get_text(start_iter, end_iter, False)
 
         self.textbuffer.delete(start_iter, end_iter)
-
-        return fpr
+        # return raw input from user. It will be checked on higher
+        # level if the there was a fingerprint entered
+        return raw_text
 
 
     def on_loadbutton_clicked(self, *args, **kwargs):
@@ -359,33 +380,32 @@ class SignKeyPage(Gtk.VBox):
 
     def __init__(self):
         super(SignKeyPage, self).__init__()
-        self.set_spacing(10)
+        self.set_spacing(5)
 
-        self.topLabel = Gtk.Label()
-        self.topLabel.set_markup("Downloading key with fingerprint ")
-        self.topLabel.set_line_wrap(True)
+        self.mainLabel = Gtk.Label()
+        self.mainLabel.set_line_wrap(True)
 
-        self.textview = Gtk.TextView()
-        self.textbuffer = self.textview.get_buffer()
+        self.pack_start(self.mainLabel, False, False, 0)
 
-        self.scrolled_window = Gtk.ScrolledWindow()
-        self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.scrolled_window.add(self.textview)
 
-        hBox = Gtk.HBox(spacing=10)
-        hBox.pack_start(self.topLabel, False, False, 0)
-        hBox.pack_start(self.scrolled_window, True, True, 0)
-        self.pack_start(hBox, True, True, 0)
+    def display_downloaded_key(self, key, scanned_fpr):
 
-    def display_downloaded_key(self, fpr, keydata):
-        self.topLabel.set_markup("Downloading key with fingerprint \n%s" % fpr)
-        self.topLabel.show()
+        # FIXME: If the two fingerprints don't match, the button
+        # should be disabled
+        key_text = GLib.markup_escape_text(str(key))
 
-        start_iter = self.textbuffer.get_start_iter()
-        end_iter = self.textbuffer.get_end_iter()
-        self.textbuffer.delete(start_iter, end_iter)
+        markup = """\
 
-        self.textbuffer.insert_at_cursor(keydata, len(keydata))
+
+Signing the following key
+
+<b>{0}</b>
+
+Press 'Next' if you have checked the ID of the person
+and you want to sign all UIDs on this key.""".format(key_text)
+
+        self.mainLabel.set_markup(markup)
+        self.mainLabel.show()
 
 
 class PostSignPage(Gtk.VBox):
