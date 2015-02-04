@@ -1,0 +1,72 @@
+
+
+
+
+
+
+						 Compare key validity
+                                                 
+                                                 [*] Wrap key in own class
+						 [*] Show QR-Code as hashvalue
+						 [ ] Compare with hash on scan
+
+
+						 Replace avahi with pyre (∅ mq)
+						 
+						 [ ] import pyre
+						 [ ] init pyre
+						 [ ] announce on local network
+						 [ ] connect to correct server
+						 [ ] send key
+
+
+						 Split gui from logic
+
+						 [ ] design basic frame
+						 [ ] throw out all gui code
+						 [ ] wire gtk
+						 [ ] define interface to logic
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
