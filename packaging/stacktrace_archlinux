@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/usr/lib/python2.7/site-packages/keysign/MainWindow.py", line 59, in on_startup
+    notebook.append_page(KeySignSection(self), Gtk.Label('Keys'))
+  File "/usr/lib/python2.7/site-packages/keysign/Sections.py", line 197, in __init__
+    self.keysPage = KeysPage()
+  File "/usr/lib/python2.7/site-packages/keysign/KeysPage.py", line 75, in __init__
+    for key in self.keyring.get_keys(None, True, False).values():
+  File "/usr/lib/python2.7/site-packages/monkeysign/gpg.py", line 385, in get_keys
+    key = OpenPGPkey(keydata)
+  File "/usr/lib/python2.7/site-packages/monkeysign/gpg.py", line 656, in __init__
+    self.parse_gpg_list(data)
+  File "/usr/lib/python2.7/site-packages/monkeysign/gpg.py", line 698, in parse_gpg_list
+    (null, self.trust, self.length, self.algo, keyid, self.creation, self.expiry, serial, trust, uid, sigclass, purpose, smime, wtf, wtf, wtf) = record
+ValueError: too many values to unpack
