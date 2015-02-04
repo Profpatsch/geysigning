@@ -2,13 +2,33 @@
 # ui["app-window"]
 # ui["app-window"]["some-widget"]
 
-# examples
-# {widget':None}
-# ['w1', 'w2']
-# 'single-widget'
-# {'compound-widget': ['child1', 'child2']
-#  'second': None}
-
+# example
+# structure = {
+#     'some-container': 'inner-widget',
+#     'some-widget': None,
+#     'list-container': [
+#         'widget',
+#         {'inner-container': 'innermost-widget'}
+#     ]
+# }
+# Expands to
+# UI(
+#     None,
+#     [
+#         UI('some-container', UI('inner-widget', None)),
+#         UI('some-widget', None),
+#         UI('list-container', [
+#                 UI('widget', None),
+#                 UI('inner-container', UI('innermost-widget', None))
+#             ]
+#         )
+#     ]
+# )
+# Accessing:
+# ui -> UI()
+# ui['some-container'] -> widget('some-container')
+# ui['some-container']['inner-widget'] -> widget('inner-widget')
+# ui['list-container'][1]['inner-container'] -> widget('inner-container')
 
 
 class UI:
